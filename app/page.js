@@ -1,22 +1,13 @@
-import { supabase } from '@/lib/supabase'
+import Hero from "@/components/Hero";
+import FilterBar from "@/components/FilterBar";
+import ListingsGrid from "@/components/ListingsGrid";
 
-export default async function Home() {
-  const { data: courses, error } = await supabase.from('courses').select()
-
-  if (error) {
-    return <p>Något gick fel: {error.message}</p>
-  }
-
+export default function Home() {
   return (
-    <div>
-      <h1>Mina kurser</h1>
-      <ul>
-        {courses.map((course) => (
-          <li key={course.id}>
-            {course.code} — {course.name}
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
+    <main className="flex-1 bg-[var(--sand)]">
+      <Hero />
+      <FilterBar />
+      <ListingsGrid />
+    </main>
+  );
 }
