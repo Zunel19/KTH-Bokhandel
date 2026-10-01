@@ -162,7 +162,7 @@ export default function SkapaAnnonsPage() {
             <textarea
               id="description"
               rows={4}
-              className={INPUT_CLASSES}
+              className={`${INPUT_CLASSES} resize-none`}
               placeholder="Skick, upplaga, ev. anteckningar i boken..."
             />
           </div>
