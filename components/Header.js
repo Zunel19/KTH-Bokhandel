@@ -1,8 +1,20 @@
+import Link from "next/link";
+
 export default function Header() {
   return (
     <header className="bg-[var(--sand)] border-b border-[var(--kth-blue)]/20">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4 sm:px-8">
-        <span className="font-semibold text-[var(--navy)]">KTH Bokhandel</span>
+        <div className="flex items-center gap-6">
+          <span className="font-semibold text-[var(--navy)]">KTH Bokhandel</span>
+
+          {/* Tillfällig länk tills profilsidan finns */}
+          <Link
+            href="/skapa-annons"
+            className="rounded-full bg-[var(--kth-blue)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--navy)]"
+          >
+            Skapa din första annons
+          </Link>
+        </div>
 
         <button
           type="button"
