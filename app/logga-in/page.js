@@ -2,31 +2,131 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 const INPUT_CLASSES =
   "w-full rounded-lg border border-[var(--sky-blue)] bg-white px-4 py-2.5 text-sm text-[var(--navy)] focus:outline-none focus:ring-2 focus:ring-[var(--sky-blue)]";
 
+// MAGIC LINK-INLOGGNING — sparad till senare, används inte just nu
+//
+// State:
+//   const [email, setEmail] = useState("");
+//   const [submitted, setSubmitted] = useState(false);
+//
+// async function handleSubmit(e) {
+//   e.preventDefault();
+//   setError(null);
+//
+//   const { error } = await supabase.auth.signInWithOtp({
+//     email,
+//     options: {
+//       emailRedirectTo: `${window.location.origin}/valkommen`,
+//     },
+//   });
+//
+//   if (error) {
+//     setError(error.message);
+//   } else {
+//     setSubmitted(true);
+//   }
+// }
+//
+// JSX inuti kortet:
+//   {submitted ? (
+//     <div className="flex flex-col items-center gap-3 py-4 text-center">
+//       <svg
+//         xmlns="http://www.w3.org/2000/svg"
+//         fill="none"
+//         viewBox="0 0 24 24"
+//         strokeWidth={1.5}
+//         stroke="currentColor"
+//         className="h-10 w-10 text-[var(--kth-blue)]"
+//         aria-hidden="true"
+//       >
+//         <path
+//           strokeLinecap="round"
+//           strokeLinejoin="round"
+//           d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"
+//         />
+//       </svg>
+//       <p className="text-sm text-[var(--navy)]">
+//         Kolla din inkorg! Vi har skickat en inloggningslänk till{" "}
+//         <span className="font-medium">{email}</span>.
+//       </p>
+//     </div>
+//   ) : (
+//     <>
+//       <h1 className="mb-2 font-serif text-3xl text-[var(--navy)]">
+//         Logga in
+//       </h1>
+//       <p className="mb-6 text-sm text-gray-500">
+//         Ange din @kth.se-mejladress så skickar vi en inloggningslänk till
+//         dig.
+//       </p>
+//       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+//         <input
+//           type="email"
+//           required
+//           placeholder="dittnamn@kth.se"
+//           className={INPUT_CLASSES}
+//           value={email}
+//           onChange={(e) => setEmail(e.target.value)}
+//         />
+//         <button
+//           type="submit"
+//           className="rounded-lg bg-[var(--kth-blue)] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[var(--navy)]"
+//         >
+//           Skicka länk
+//         </button>
+//
+//         {error && (
+//           <p className="text-sm text-red-600">{error}</p>
+//         )}
+//       </form>
+//     </>
+//   )}
+
 export default function LoggaInPage() {
-  const [email, setEmail] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const router = useRouter();
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
+    setLoading(true);
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/valkommen`,
-      },
-    });
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier, password }),
+      });
+      const json = await res.json();
 
-    if (error) {
-      setError(error.message);
-    } else {
-      setSubmitted(true);
+      if (!res.ok) {
+        setError(json.error ?? "Något gick fel, försök igen.");
+        return;
+      }
+
+      const { error } = await supabase.auth.setSession({
+        access_token: json.access_token,
+        refresh_token: json.refresh_token,
+      });
+
+      if (error) {
+        console.error("Kunde inte spara sessionen:", error);
+        setError("Något gick fel, försök igen.");
+      } else {
+        router.replace("/valkommen");
+      }
+    } catch {
+      setError("Kunde inte nå servern, försök igen.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -54,59 +154,61 @@ export default function LoggaInPage() {
         </Link>
 
         <div className="rounded-lg border border-black/5 bg-white p-8 shadow-sm">
-          {submitted ? (
-            <div className="flex flex-col items-center gap-3 py-4 text-center">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
-                className="h-10 w-10 text-[var(--kth-blue)]"
-                aria-hidden="true"
+          <h1 className="mb-2 font-serif text-3xl text-[var(--navy)]">
+            Logga in
+          </h1>
+          <p className="mb-6 text-sm text-gray-500">
+            Ange ditt användarnamn eller din @kth.se-mejladress, och ditt
+            lösenord.
+          </p>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <input
+              type="text"
+              required
+              autoComplete="username"
+              placeholder="Användarnamn eller mejladress"
+              className={INPUT_CLASSES}
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+            />
+            <div className="flex flex-col gap-2">
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                placeholder="Lösenord"
+                className={INPUT_CLASSES}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <Link
+                href="/glomt-losenord"
+                className="self-end text-sm text-[var(--kth-blue)] hover:underline"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"
-                />
-              </svg>
-              <p className="text-sm text-[var(--navy)]">
-                Kolla din inkorg! Vi har skickat en inloggningslänk till{" "}
-                <span className="font-medium">{email}</span>.
-              </p>
+                Glömt lösenord?
+              </Link>
             </div>
-          ) : (
-            <>
-              <h1 className="mb-2 font-serif text-3xl text-[var(--navy)]">
-                Logga in
-              </h1>
-              <p className="mb-6 text-sm text-gray-500">
-                Ange din @kth.se-mejladress så skickar vi en inloggningslänk till
-                dig.
-              </p>
-              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-                <input
-                  type="email"
-                  required
-                  placeholder="dittnamn@kth.se"
-                  className={INPUT_CLASSES}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-                <button
-                  type="submit"
-                  className="rounded-lg bg-[var(--kth-blue)] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[var(--navy)]"
-                >
-                  Skicka länk
-                </button>
 
-                {error && (
-                  <p className="text-sm text-red-600">{error}</p>
-                )}
-              </form>
-            </>
-          )}
+            {error && <p className="text-sm text-red-600">{error}</p>}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-lg bg-[var(--kth-blue)] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[var(--navy)] disabled:opacity-60"
+            >
+              {loading ? "Loggar in..." : "Logga in"}
+            </button>
+          </form>
+
+          <p className="mt-6 text-center text-sm text-gray-500">
+            Har du inget konto?{" "}
+            <Link
+              href="/skapa-konto"
+              className="text-[var(--kth-blue)] hover:underline"
+            >
+              Skapa konto
+            </Link>
+          </p>
         </div>
       </div>
     </main>
