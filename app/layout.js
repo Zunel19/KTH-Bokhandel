@@ -23,7 +23,7 @@ export default function RootLayout({ children }) {
       lang="sv"
       className={`${fraunces.variable} ${inter.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col font-sans">
         <Header />
         {children}
       </body>

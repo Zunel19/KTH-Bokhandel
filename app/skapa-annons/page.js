@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 
@@ -12,16 +13,57 @@ const INPUT_CLASSES =
 const LABEL_CLASSES = "text-sm font-medium text-[var(--navy)]";
 
 export default function SkapaAnnonsPage() {
+  const router = useRouter();
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+  const [condition, setCondition] = useState("Nyskick");
+  const [isbn, setIsbn] = useState("");
+
   const [courseQuery, setCourseQuery] = useState("");
   const [showCourseDropdown, setShowCourseDropdown] = useState(false);
 
   const [meetingPoint, setMeetingPoint] = useState(MEETING_POINTS[0]);
   const [customMeetingPoint, setCustomMeetingPoint] = useState("");
 
-  const [submitted, setSubmitted] = useState(false);
-
   const [courses, setCourses] = useState([]);
   const [selectedCourseId, setSelectedCourseId] = useState(null);
+
+  useEffect(() => {
+    async function checkSessionAndProfile() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const user = session?.user;
+
+      if (!user) {
+        router.replace("/logga-in");
+        return;
+      }
+
+      const { data } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!data) {
+        router.replace("/valkommen");
+        return;
+      }
+
+      setUserId(user.id);
+      setLoading(false);
+    }
+
+    checkSessionAndProfile();
+  }, [router]);
 
   useEffect(() => {
     async function fetchCourses() {
@@ -39,7 +81,7 @@ export default function SkapaAnnonsPage() {
       : courses.filter((course) =>
           `${course.code} ${course.name}`
             .toLowerCase()
-            .includes(courseQuery.toLowerCase())
+            .includes(courseQuery.toLowerCase()),
         );
 
   function handleCourseSelect(course) {
@@ -48,9 +90,69 @@ export default function SkapaAnnonsPage() {
     setShowCourseDropdown(false);
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    setSubmitted(true);
+    setError(null);
+
+    if (title.trim() === "") {
+      setError("Ange en titel.");
+      return;
+    }
+    if (selectedCourseId === null) {
+      setError("Välj en kurs i listan.");
+      return;
+    }
+    if (price === "" || Number.isNaN(Number(price)) || Number(price) < 0) {
+      setError("Ange ett pris (0 kr eller mer).");
+      return;
+    }
+
+    setSaving(true);
+    const { error: insertError } = await supabase.from("listings").insert({
+      seller_id: userId,
+      course_id: selectedCourseId,
+      title: title.trim(),
+      description: description.trim() || null,
+      price: Number(price),
+      condition,
+      meeting_point:
+        (meetingPoint === "Valfritt"
+          ? customMeetingPoint.trim()
+          : meetingPoint) || null,
+      isbn: isbn.trim() || null,
+    });
+
+    if (insertError) {
+      console.error("Kunde inte spara annonsen:", insertError);
+      setError("Något gick fel, försök igen.");
+    } else {
+      setSaved(true);
+    }
+    setSaving(false);
+  }
+
+  function handleReset() {
+    setTitle("");
+    setDescription("");
+    setPrice("");
+    setCondition("Nyskick");
+    setIsbn("");
+    setCourseQuery("");
+    setSelectedCourseId(null);
+    setShowCourseDropdown(false);
+    setMeetingPoint(MEETING_POINTS[0]);
+    setCustomMeetingPoint("");
+    setError(null);
+    setSaving(false);
+    setSaved(false);
+  }
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-[var(--sand)] px-6 py-12">
+        <p className="text-sm text-gray-500">Laddar...</p>
+      </main>
+    );
   }
 
   return (
@@ -76,185 +178,232 @@ export default function SkapaAnnonsPage() {
           Tillbaka
         </Link>
 
-        <h1 className="mb-8 font-serif text-3xl text-[var(--navy)] sm:text-4xl">
-          Lägg upp en annons
-        </h1>
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLASSES} htmlFor="title">
-              Titel
-            </label>
-            <input
-              id="title"
-              type="text"
-              className={INPUT_CLASSES}
-              placeholder="T.ex. Endimensionell analys - Persson & Böiers"
-            />
-          </div>
-
-          <div className="relative flex flex-col gap-1.5">
-            <label className={LABEL_CLASSES} htmlFor="course">
-              Kurs
-            </label>
-            <div className="relative">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--kth-blue)]/50"
-                aria-hidden="true"
+        {saved ? (
+          <div className="rounded-lg border border-black/5 bg-white p-8 shadow-sm">
+            <h1 className="mb-2 font-serif text-3xl text-[var(--navy)]">
+              Din annons är sparad
+            </h1>
+            <p className="mb-6 text-sm text-gray-500">
+              Annonsen är nu publicerad och syns för andra studenter.
+            </p>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={handleReset}
+                className="rounded-lg bg-[var(--kth-blue)] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[var(--navy)]"
               >
-                <path
-                  fillRule="evenodd"
-                  d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.45 4.39l3.08 3.08a.75.75 0 1 1-1.06 1.06l-3.08-3.08A7 7 0 0 1 2 9Z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <input
-                id="course"
-                type="text"
-                className={`${INPUT_CLASSES} pl-9`}
-                placeholder="Sök kurskod eller namn..."
-                value={courseQuery}
-                autoComplete="off"
-                onChange={(e) => {
-                  setCourseQuery(e.target.value);
-                  setShowCourseDropdown(true);
-                }}
-                onFocus={() => setShowCourseDropdown(true)}
-                onBlur={() =>
-                  setTimeout(() => setShowCourseDropdown(false), 100)
-                }
-              />
+                Lägg upp en till
+              </button>
+              <Link
+                href="/"
+                className="rounded-lg border border-[var(--kth-blue)] bg-transparent px-6 py-3 text-center text-sm font-medium text-[var(--kth-blue)] transition-colors hover:bg-[var(--kth-blue)] hover:text-white"
+              >
+                Till startsidan
+              </Link>
             </div>
+          </div>
+        ) : (
+          <>
+            <h1 className="mb-8 font-serif text-3xl text-[var(--navy)] sm:text-4xl">
+              Lägg upp en annons
+            </h1>
 
-            {showCourseDropdown && (
-              <ul className="absolute left-0 top-full z-10 mt-1 w-full overflow-hidden rounded-lg border border-[var(--sky-blue)] bg-white shadow-md">
-                {filteredCourses.length > 0 ? (
-                  filteredCourses.map((course) => (
-                    <li key={course.code}>
-                      <button
-                        type="button"
-                        onMouseDown={() => handleCourseSelect(course)}
-                        className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-[var(--navy)] hover:bg-[var(--sky-blue)]/10"
-                      >
-                        <span>{course.name}</span>
-                        <span className="text-xs text-gray-500">
-                          {course.code}
-                        </span>
-                      </button>
-                    </li>
-                  ))
-                ) : (
-                  <li className="px-4 py-2 text-sm text-gray-500">
-                    Inga kurser hittades
-                  </li>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className={LABEL_CLASSES} htmlFor="title">
+                  Titel
+                </label>
+                <input
+                  id="title"
+                  type="text"
+                  className={INPUT_CLASSES}
+                  placeholder="T.ex. Endimensionell analys - Persson & Böiers"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </div>
+
+              <div className="relative flex flex-col gap-1.5">
+                <label className={LABEL_CLASSES} htmlFor="course">
+                  Kurs
+                </label>
+                <div className="relative">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--kth-blue)]/50"
+                    aria-hidden="true"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.45 4.39l3.08 3.08a.75.75 0 1 1-1.06 1.06l-3.08-3.08A7 7 0 0 1 2 9Z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  <input
+                    id="course"
+                    type="text"
+                    className={`${INPUT_CLASSES} pl-9`}
+                    placeholder="Sök kurskod eller namn..."
+                    value={courseQuery}
+                    autoComplete="off"
+                    onChange={(e) => {
+                      setCourseQuery(e.target.value);
+                      setShowCourseDropdown(true);
+                      setSelectedCourseId(null);
+                    }}
+                    onFocus={() => setShowCourseDropdown(true)}
+                    onBlur={() =>
+                      setTimeout(() => setShowCourseDropdown(false), 100)
+                    }
+                  />
+                </div>
+
+                {showCourseDropdown && (
+                  <ul className="absolute left-0 top-full z-10 mt-1 w-full overflow-hidden rounded-lg border border-[var(--sky-blue)] bg-white shadow-md">
+                    {filteredCourses.length > 0 ? (
+                      filteredCourses.map((course) => (
+                        <li key={course.code}>
+                          <button
+                            type="button"
+                            onMouseDown={() => handleCourseSelect(course)}
+                            className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-[var(--navy)] hover:bg-[var(--sky-blue)]/10"
+                          >
+                            <span>{course.name}</span>
+                            <span className="text-xs text-gray-500">
+                              {course.code}
+                            </span>
+                          </button>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="px-4 py-2 text-sm text-gray-500">
+                        Inga kurser hittades
+                      </li>
+                    )}
+                  </ul>
                 )}
-              </ul>
-            )}
-          </div>
+              </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLASSES} htmlFor="description">
-              Beskrivning
-            </label>
-            <textarea
-              id="description"
-              rows={4}
-              className={`${INPUT_CLASSES} resize-none`}
-              placeholder="Skick, upplaga, ev. anteckningar i boken..."
-            />
-          </div>
+              <div className="flex flex-col gap-1.5">
+                <label className={LABEL_CLASSES} htmlFor="description">
+                  Beskrivning
+                </label>
+                <textarea
+                  id="description"
+                  rows={4}
+                  className={`${INPUT_CLASSES} resize-none`}
+                  placeholder="Skick, upplaga, ev. anteckningar i boken..."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLASSES} htmlFor="price">
-              Pris (kr)
-            </label>
-            <input
-              id="price"
-              type="number"
-              min="0"
-              className={INPUT_CLASSES}
-              placeholder="250"
-            />
-          </div>
+              <div className="flex flex-col gap-1.5">
+                <label className={LABEL_CLASSES} htmlFor="price">
+                  Pris (kr)
+                </label>
+                <input
+                  id="price"
+                  type="number"
+                  min="0"
+                  className={INPUT_CLASSES}
+                  placeholder="250"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                />
+              </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLASSES} htmlFor="condition">
-              Skick
-            </label>
-            <select id="condition" className={INPUT_CLASSES} defaultValue="Nyskick">
-              <option>Ny</option>
-              <option>Nyskick</option>
-              <option>Använt skick</option>
-            </select>
-          </div>
+              <div className="flex flex-col gap-1.5">
+                <label className={LABEL_CLASSES} htmlFor="condition">
+                  Skick
+                </label>
+                <select
+                  id="condition"
+                  className={INPUT_CLASSES}
+                  value={condition}
+                  onChange={(e) => setCondition(e.target.value)}
+                >
+                  <option>Ny</option>
+                  <option>Nyskick</option>
+                  <option>Använt skick</option>
+                </select>
+              </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLASSES} htmlFor="meetingPoint">
-              Mötesplats
-            </label>
-            {meetingPoint === "Valfritt" ? (
-              <input
-                id="meetingPoint"
-                type="text"
-                className={INPUT_CLASSES}
-                placeholder="Skriv in en mötesplats..."
-                value={customMeetingPoint}
-                onChange={(e) => setCustomMeetingPoint(e.target.value)}
-              />
-            ) : (
-              <select
-                id="meetingPoint"
-                className={INPUT_CLASSES}
-                value={meetingPoint}
-                onChange={(e) => setMeetingPoint(e.target.value)}
+              <div className="flex flex-col gap-1.5">
+                <label className={LABEL_CLASSES} htmlFor="meetingPoint">
+                  Mötesplats
+                </label>
+                {meetingPoint === "Valfritt" ? (
+                  <input
+                    id="meetingPoint"
+                    type="text"
+                    className={INPUT_CLASSES}
+                    placeholder="Skriv in en mötesplats..."
+                    value={customMeetingPoint}
+                    onChange={(e) => setCustomMeetingPoint(e.target.value)}
+                  />
+                ) : (
+                  <select
+                    id="meetingPoint"
+                    className={INPUT_CLASSES}
+                    value={meetingPoint}
+                    onChange={(e) => setMeetingPoint(e.target.value)}
+                  >
+                    {MEETING_POINTS.map((point) => (
+                      <option key={point}>{point}</option>
+                    ))}
+                    <option>Valfritt</option>
+                  </select>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className={LABEL_CLASSES} htmlFor="isbn">
+                  ISBN (valfritt)
+                </label>
+                <input
+                  id="isbn"
+                  type="text"
+                  className={INPUT_CLASSES}
+                  placeholder="978-..."
+                  value={isbn}
+                  onChange={(e) => setIsbn(e.target.value)}
+                />
+                <p className="text-xs text-gray-500">
+                  Hittas vanligtvis på bokens insida, t.ex. på andra sidan
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className={LABEL_CLASSES} htmlFor="images">
+                  Bilder
+                </label>
+                <input
+                  id="images"
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  className="text-sm text-[var(--navy)]"
+                />
+                <p className="text-xs text-gray-500">
+                  Bilder kan inte sparas än, det kommer i nästa steg.
+                </p>
+              </div>
+
+              {error && <p className="text-sm text-red-600">{error}</p>}
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="mt-2 rounded-lg bg-[var(--kth-blue)] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[var(--navy)] disabled:opacity-60"
               >
-                {MEETING_POINTS.map((point) => (
-                  <option key={point}>{point}</option>
-                ))}
-                <option>Valfritt</option>
-              </select>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLASSES} htmlFor="isbn">
-              ISBN (valfritt)
-            </label>
-            <input id="isbn" type="text" className={INPUT_CLASSES} placeholder="978-..." />
-            <p className="text-xs text-gray-500">
-              Hittas vanligtvis på bokens insida, t.ex. på andra sidan
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLASSES} htmlFor="images">
-              Bilder
-            </label>
-            <input
-              id="images"
-              type="file"
-              multiple
-              accept="image/*"
-              className="text-sm text-[var(--navy)]"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="mt-2 rounded-lg bg-[var(--kth-blue)] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[var(--navy)]"
-          >
-            Lägg upp annons
-          </button>
-
-          {submitted && (
-            <p className="text-sm text-[var(--kth-blue)]">
-              Sparas snart! (Funktion kommer när inloggning är klar)
-            </p>
-          )}
-        </form>
+                {saving ? "Sparar..." : "Lägg upp annons"}
+              </button>
+            </form>
+          </>
+        )}
       </div>
     </main>
   );

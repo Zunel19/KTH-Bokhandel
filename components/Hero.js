@@ -1,3 +1,5 @@
+import SellPrompt from "./SellPrompt";
+
 export default function Hero() {
   return (
     <section className="relative w-full h-[60vh] min-h-[420px] overflow-hidden">
@@ -6,7 +8,7 @@ export default function Hero() {
       <div className="absolute inset-0 bg-[var(--kth-blue)]/10" />
 
       <div className="relative z-10 flex h-full flex-col items-center justify-center gap-6 px-6 text-center">
-        <h1 className="max-w-2xl font-serif text-4xl text-[var(--navy)] sm:text-5xl">
+        <h1 className="mx-auto mb-8 max-w-3xl text-balance text-center font-serif text-4xl font-normal leading-tight tracking-tight text-[var(--navy)] md:mb-10 md:text-5xl">
           Hitta din kurslitteratur på KTH
         </h1>
 
@@ -23,6 +25,8 @@ export default function Hero() {
             Sök
           </button>
         </div>
+
+        <SellPrompt />
       </div>
     </section>
   );
