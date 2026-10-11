@@ -18,7 +18,7 @@ export default function ListingsGrid() {
       const { data, error } = await supabase
         .from("listings")
         .select(
-          "id, title, price, seller_id, created_at, profiles(username), listing_images(image_url, thumb_url, position)"
+          "id, title, price, seller_id, created_at, profiles(username), listing_images(image_url, thumb_url, position), listing_items(id)"
         )
         .eq("status", "till salu")
         .order("created_at", { ascending: false })

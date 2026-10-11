@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { resizeToJpeg } from "@/lib/imageUtils";
 import Link from "next/link";
+import SearchSelect from "@/components/SearchSelect";
 import {
   DndContext,
   closestCenter,
@@ -28,6 +29,20 @@ const MEETING_POINTS = ["Biblioteket", "Kårhuset", "Drottning Kristinas väg"];
 const MAX_IMAGES = 6;
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const BUCKET = "listing-images";
+
+const MIN_BOOKS = 2;
+const MAX_BOOKS = 15;
+const CONDITIONS = ["Ny", "Nyskick", "Använt skick"];
+
+function newBook() {
+  return {
+    id: crypto.randomUUID(),
+    title: "",
+    courseId: null,
+    condition: "Nyskick",
+    isbn: "",
+  };
+}
 
 const INPUT_CLASSES =
   "w-full rounded-lg border border-[var(--sky-blue)] bg-white px-4 py-2.5 text-sm text-[var(--navy)] focus:outline-none focus:ring-2 focus:ring-[var(--sky-blue)]";
@@ -100,14 +115,21 @@ export default function SkapaAnnonsPage() {
   const [condition, setCondition] = useState("Nyskick");
   const [isbn, setIsbn] = useState("");
 
-  const [courseQuery, setCourseQuery] = useState("");
-  const [showCourseDropdown, setShowCourseDropdown] = useState(false);
-
   const [meetingPoint, setMeetingPoint] = useState(MEETING_POINTS[0]);
   const [customMeetingPoint, setCustomMeetingPoint] = useState("");
 
   const [courses, setCourses] = useState([]);
   const [selectedCourseId, setSelectedCourseId] = useState(null);
+
+  // Bundle-läge. linkType: "shared" (samma kurs), "course" (kurs per bok)
+  // eller "program".
+  const [mode, setMode] = useState("single");
+  const [linkType, setLinkType] = useState("shared");
+  const [sharedCourseId, setSharedCourseId] = useState(null);
+  const [programs, setPrograms] = useState([]);
+  const [programId, setProgramId] = useState(null);
+  const [year, setYear] = useState(null);
+  const [books, setBooks] = useState(() => [newBook(), newBook()]);
 
   const [images, setImages] = useState([]);
   const [imagesError, setImagesError] = useState(null);
@@ -175,32 +197,114 @@ export default function SkapaAnnonsPage() {
     fetchCourses();
   }, []);
 
-  const filteredCourses =
-    courseQuery.trim() === ""
-      ? courses
-      : courses.filter((course) =>
-          `${course.code} ${course.name}`
-            .toLowerCase()
-            .includes(courseQuery.toLowerCase()),
-        );
+  useEffect(() => {
+    async function fetchPrograms() {
+      const { data, error } = await supabase
+        .from("programs")
+        .select("id, name, years")
+        .order("name");
+      if (!error) {
+        setPrograms(data);
+      }
+    }
+    fetchPrograms();
+  }, []);
 
-  function handleCourseSelect(course) {
-    setCourseQuery(`${course.code} — ${course.name}`);
-    setSelectedCourseId(course.id);
-    setShowCourseDropdown(false);
+  const courseItems = courses.map((c) => ({
+    id: c.id,
+    label: `${c.code} — ${c.name}`,
+    primary: c.name,
+    secondary: c.code,
+  }));
+
+  const programItems = programs.map((p) => ({
+    id: p.id,
+    label: p.name,
+    primary: p.name,
+    secondary: `${p.years} år`,
+  }));
+
+  const selectedProgram = programs.find((p) => p.id === programId) ?? null;
+
+  function handleProgramChange(id) {
+    setProgramId(id);
+    // Program med ett enda år (t.ex. Tekniskt basår) får år 1 automatiskt.
+    const program = programs.find((p) => p.id === id);
+    setYear(program?.years === 1 ? 1 : null);
+  }
+
+  // Byte av koppling nollställer det som hörde till det gamla läget, så att
+  // en bundle aldrig sparas med en blandning av kopplingar.
+  function handleLinkTypeChange(type) {
+    if (linkType === "shared") {
+      setSharedCourseId(null);
+    } else if (linkType === "course") {
+      setBooks((prev) => prev.map((book) => ({ ...book, courseId: null })));
+    } else if (linkType === "program") {
+      setProgramId(null);
+      setYear(null);
+    }
+    setLinkType(type);
+  }
+
+  function updateBook(id, changes) {
+    setBooks((prev) =>
+      prev.map((book) => (book.id === id ? { ...book, ...changes } : book))
+    );
+  }
+
+  function addBook() {
+    setBooks((prev) => (prev.length < MAX_BOOKS ? [...prev, newBook()] : prev));
+  }
+
+  function removeBook(id) {
+    setBooks((prev) =>
+      prev.length > MIN_BOOKS ? prev.filter((book) => book.id !== id) : prev
+    );
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
 
-    if (title.trim() === "") {
-      setError("Ange en titel.");
-      return;
-    }
-    if (selectedCourseId === null) {
-      setError("Välj en kurs i listan.");
-      return;
+    if (mode === "single") {
+      if (title.trim() === "") {
+        setError("Ange en titel.");
+        return;
+      }
+      if (selectedCourseId === null) {
+        setError("Välj en kurs i listan.");
+        return;
+      }
+    } else {
+      if (title.trim() === "") {
+        setError("Ange en titel för bundlen.");
+        return;
+      }
+      if (books.length < MIN_BOOKS) {
+        setError("En bundle måste innehålla minst två böcker.");
+        return;
+      }
+      if (linkType === "shared") {
+        if (sharedCourseId === null) {
+          setError("Välj en kurs för bundlen.");
+          return;
+        }
+      } else if (linkType === "course") {
+        const missing = books.findIndex((book) => book.courseId === null);
+        if (missing !== -1) {
+          setError(`Välj en kurs för bok ${missing + 1}.`);
+          return;
+        }
+      } else if (programId === null || year === null) {
+        setError("Välj program och årskurs.");
+        return;
+      }
+      const untitled = books.findIndex((book) => book.title.trim() === "");
+      if (untitled !== -1) {
+        setError(`Ange en titel för bok ${untitled + 1}.`);
+        return;
+      }
     }
     if (price === "" || Number.isNaN(Number(price)) || Number(price) < 0) {
       setError("Ange ett pris (0 kr eller mer).");
@@ -230,16 +334,16 @@ export default function SkapaAnnonsPage() {
       .from("listings")
       .insert({
         seller_id: userId,
-        course_id: selectedCourseId,
         title: title.trim(),
         description: description.trim() || null,
         price: Number(price),
-        condition,
         meeting_point:
           (meetingPoint === "Valfritt"
             ? customMeetingPoint.trim()
             : meetingPoint) || null,
-        isbn: isbn.trim() || null,
+        ...(mode === "bundle" && linkType === "program"
+          ? { program_id: programId, year }
+          : {}),
       })
       .select("id")
       .single();
@@ -252,6 +356,50 @@ export default function SkapaAnnonsPage() {
     }
 
     const listingId = listing.id;
+
+    // En annons har alltid minst en bokrad i listing_items.
+    const itemRows =
+      mode === "single"
+        ? [
+            {
+              listing_id: listingId,
+              course_id: selectedCourseId,
+              isbn: isbn.trim() || null,
+              condition,
+              position: 1,
+            },
+          ]
+        : books.map((book, index) => ({
+            listing_id: listingId,
+            course_id:
+              linkType === "shared"
+                ? sharedCourseId
+                : linkType === "course"
+                  ? book.courseId
+                  : null,
+            title: book.title.trim(),
+            isbn: book.isbn.trim() || null,
+            condition: book.condition,
+            position: index + 1,
+          }));
+
+    const { error: itemError } = await supabase
+      .from("listing_items")
+      .insert(itemRows);
+
+    if (itemError) {
+      console.error("Kunde inte spara boken:", itemError);
+      // Bokraderna tas bort automatiskt via on delete cascade.
+      const { error: deleteError } = await supabase
+        .from("listings")
+        .delete()
+        .eq("id", listingId);
+      if (deleteError) console.error("Kunde inte ta bort annonsen:", deleteError);
+      setError("Något gick fel, försök igen.");
+      setSaving(false);
+      return;
+    }
+
     const uploadedPaths = [];
 
     try {
@@ -369,9 +517,13 @@ export default function SkapaAnnonsPage() {
     setPrice("");
     setCondition("Nyskick");
     setIsbn("");
-    setCourseQuery("");
     setSelectedCourseId(null);
-    setShowCourseDropdown(false);
+    setMode("single");
+    setLinkType("shared");
+    setSharedCourseId(null);
+    setProgramId(null);
+    setYear(null);
+    setBooks([newBook(), newBook()]);
     setMeetingPoint(MEETING_POINTS[0]);
     setCustomMeetingPoint("");
     setError(null);
@@ -441,82 +593,301 @@ export default function SkapaAnnonsPage() {
             </h1>
 
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <div
+                role="radiogroup"
+                aria-label="Typ av annons"
+                className="mb-6 inline-flex self-start rounded-lg border border-[var(--sky-blue)] bg-white p-1"
+              >
+                {[
+                  { value: "single", label: "En bok" },
+                  { value: "bundle", label: "En bundle" },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === option.value}
+                    onClick={() => setMode(option.value)}
+                    className={`rounded-md px-5 py-2 text-sm font-medium transition-colors ${
+                      mode === option.value
+                        ? "bg-[var(--kth-blue)] text-white"
+                        : "text-[var(--navy)] hover:bg-[var(--sky-blue)]/10"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex flex-col gap-1.5">
                 <label className={LABEL_CLASSES} htmlFor="title">
-                  Titel
+                  {mode === "bundle" ? "Titel på bundlen" : "Titel"}
                 </label>
                 <input
                   id="title"
                   type="text"
                   className={INPUT_CLASSES}
-                  placeholder="T.ex. Endimensionell analys - Persson & Böiers"
+                  placeholder={
+                    mode === "bundle"
+                      ? "T.ex. Tekniskt basår, alla böcker"
+                      : "T.ex. Endimensionell analys - Persson & Böiers"
+                  }
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                 />
               </div>
 
-              <div className="relative flex flex-col gap-1.5">
-                <label className={LABEL_CLASSES} htmlFor="course">
-                  Kurs
-                </label>
-                <div className="relative">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--kth-blue)]/50"
-                    aria-hidden="true"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.45 4.39l3.08 3.08a.75.75 0 1 1-1.06 1.06l-3.08-3.08A7 7 0 0 1 2 9Z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <input
+              {mode === "single" ? (
+                <div className="relative flex flex-col gap-1.5">
+                  <label className={LABEL_CLASSES} htmlFor="course">
+                    Kurs
+                  </label>
+                  <SearchSelect
                     id="course"
-                    type="text"
-                    className={`${INPUT_CLASSES} pl-9`}
+                    items={courseItems}
+                    value={selectedCourseId}
+                    onChange={setSelectedCourseId}
                     placeholder="Sök kurskod eller namn..."
-                    value={courseQuery}
-                    autoComplete="off"
-                    onChange={(e) => {
-                      setCourseQuery(e.target.value);
-                      setShowCourseDropdown(true);
-                      setSelectedCourseId(null);
-                    }}
-                    onFocus={() => setShowCourseDropdown(true)}
-                    onBlur={() =>
-                      setTimeout(() => setShowCourseDropdown(false), 100)
-                    }
+                    emptyText="Inga kurser hittades"
                   />
                 </div>
-
-                {showCourseDropdown && (
-                  <ul className="absolute left-0 top-full z-10 mt-1 w-full overflow-hidden rounded-lg border border-[var(--sky-blue)] bg-white shadow-md">
-                    {filteredCourses.length > 0 ? (
-                      filteredCourses.map((course) => (
-                        <li key={course.code}>
-                          <button
-                            type="button"
-                            onMouseDown={() => handleCourseSelect(course)}
-                            className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-[var(--navy)] hover:bg-[var(--sky-blue)]/10"
-                          >
-                            <span>{course.name}</span>
-                            <span className="text-xs text-gray-500">
-                              {course.code}
+              ) : (
+                <>
+                  <fieldset className="flex flex-col gap-2">
+                    <legend className={`${LABEL_CLASSES} mb-1.5`}>
+                      Koppling
+                    </legend>
+                    <div className="flex flex-col gap-2">
+                      {[
+                        {
+                          value: "shared",
+                          label: "Samma kurs",
+                          hint: "Alla böcker hör till en och samma kurs",
+                        },
+                        {
+                          value: "course",
+                          label: "Kurs per bok",
+                          hint: "Välj kurs för varje bok",
+                        },
+                        {
+                          value: "program",
+                          label: "Program och årskurs",
+                          hint: "För t.ex. tekniskt basår, utan enskilda kurser",
+                        },
+                      ].map((option) => (
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-start gap-2.5"
+                        >
+                          <input
+                            type="radio"
+                            name="linkType"
+                            value={option.value}
+                            checked={linkType === option.value}
+                            onChange={() => handleLinkTypeChange(option.value)}
+                            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--kth-blue)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--kth-blue)]"
+                          />
+                          <span className="flex flex-col">
+                            <span className="text-sm font-medium text-[var(--navy)]">
+                              {option.label}
                             </span>
-                          </button>
-                        </li>
-                      ))
-                    ) : (
-                      <li className="px-4 py-2 text-sm text-gray-500">
-                        Inga kurser hittades
-                      </li>
+                            <span className="text-xs text-gray-500">
+                              {option.hint}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+
+                    {linkType === "shared" && (
+                      <div className="relative mt-1 flex flex-col gap-1.5">
+                        <label className={LABEL_CLASSES} htmlFor="sharedCourse">
+                          Kurs
+                        </label>
+                        <SearchSelect
+                          id="sharedCourse"
+                          items={courseItems}
+                          value={sharedCourseId}
+                          onChange={setSharedCourseId}
+                          placeholder="Sök kurskod eller namn..."
+                          emptyText="Inga kurser hittades"
+                        />
+                      </div>
                     )}
-                  </ul>
-                )}
-              </div>
+
+                    {linkType === "program" && (
+                      <div className="mt-1 flex flex-col gap-3 sm:flex-row">
+                        <div className="flex-1">
+                          <label className="sr-only" htmlFor="program">
+                            Program
+                          </label>
+                          <SearchSelect
+                            id="program"
+                            items={programItems}
+                            value={programId}
+                            onChange={handleProgramChange}
+                            placeholder="Sök program..."
+                            emptyText="Inga program hittades"
+                          />
+                        </div>
+                        {selectedProgram && selectedProgram.years > 1 && (
+                          <div className="sm:w-36">
+                            <label className="sr-only" htmlFor="year">
+                              Årskurs
+                            </label>
+                            <select
+                              id="year"
+                              className={INPUT_CLASSES}
+                              value={year ?? ""}
+                              onChange={(e) =>
+                                setYear(
+                                  e.target.value === ""
+                                    ? null
+                                    : Number(e.target.value)
+                                )
+                              }
+                            >
+                              <option value="" disabled>
+                                Årskurs
+                              </option>
+                              {Array.from(
+                                { length: selectedProgram.years },
+                                (_, i) => i + 1
+                              ).map((y) => (
+                                <option key={y} value={y}>
+                                  År {y}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </fieldset>
+
+                  <div className="flex flex-col gap-2">
+                    <span className={LABEL_CLASSES}>Böcker</span>
+                    {books.map((book, index) => (
+                      <div
+                        key={book.id}
+                        className="flex flex-col gap-2 rounded-lg border border-[var(--sky-blue)] p-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-[var(--navy)]">
+                            Bok {index + 1}
+                          </span>
+                          {books.length > MIN_BOOKS && (
+                            <button
+                              type="button"
+                              aria-label={`Ta bort bok ${index + 1}`}
+                              onClick={() => removeBook(book.id)}
+                              className="flex h-6 w-6 items-center justify-center rounded-full text-xs text-[var(--navy)] transition-colors hover:bg-[var(--sky-blue)]/10"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        <label className="sr-only" htmlFor={`book-${book.id}-title`}>
+                          Titel för bok {index + 1}
+                        </label>
+                        <input
+                          id={`book-${book.id}-title`}
+                          type="text"
+                          aria-required="true"
+                          className={INPUT_CLASSES}
+                          placeholder="Bokens titel"
+                          value={book.title}
+                          onChange={(e) =>
+                            updateBook(book.id, { title: e.target.value })
+                          }
+                        />
+
+                        {linkType === "course" && (
+                          <div className="relative">
+                            <label
+                              className="sr-only"
+                              htmlFor={`book-${book.id}-course`}
+                            >
+                              Kurs för bok {index + 1}
+                            </label>
+                            <SearchSelect
+                              id={`book-${book.id}-course`}
+                              items={courseItems}
+                              value={book.courseId}
+                              onChange={(id) =>
+                                updateBook(book.id, { courseId: id })
+                              }
+                              placeholder="Sök kurskod eller namn..."
+                              emptyText="Inga kurser hittades"
+                            />
+                          </div>
+                        )}
+
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <div className="sm:w-40">
+                            <label
+                              className="sr-only"
+                              htmlFor={`book-${book.id}-condition`}
+                            >
+                              Skick för bok {index + 1}
+                            </label>
+                            <select
+                              id={`book-${book.id}-condition`}
+                              className={INPUT_CLASSES}
+                              value={book.condition}
+                              onChange={(e) =>
+                                updateBook(book.id, {
+                                  condition: e.target.value,
+                                })
+                              }
+                            >
+                              {CONDITIONS.map((c) => (
+                                <option key={c}>{c}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex-1">
+                            <label
+                              className="sr-only"
+                              htmlFor={`book-${book.id}-isbn`}
+                            >
+                              ISBN för bok {index + 1} (valfritt)
+                            </label>
+                            <input
+                              id={`book-${book.id}-isbn`}
+                              type="text"
+                              className={INPUT_CLASSES}
+                              placeholder="978-..."
+                              value={book.isbn}
+                              onChange={(e) =>
+                                updateBook(book.id, { isbn: e.target.value })
+                              }
+                            />
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          ISBN är valfritt och står oftast på bokens insida.
+                        </p>
+                      </div>
+                    ))}
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={addBook}
+                        disabled={books.length >= MAX_BOOKS}
+                        className="rounded-lg border border-[var(--sky-blue)] bg-transparent px-4 py-2 text-sm font-medium text-[var(--kth-blue)] transition-colors hover:bg-[var(--sky-blue)]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        + Lägg till bok
+                      </button>
+                      <span className="text-sm text-gray-500">
+                        {books.length} av {MAX_BOOKS} böcker
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="flex flex-col gap-1.5">
                 <label className={LABEL_CLASSES} htmlFor="description">
@@ -547,21 +918,23 @@ export default function SkapaAnnonsPage() {
                 />
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className={LABEL_CLASSES} htmlFor="condition">
-                  Skick
-                </label>
-                <select
-                  id="condition"
-                  className={INPUT_CLASSES}
-                  value={condition}
-                  onChange={(e) => setCondition(e.target.value)}
-                >
-                  <option>Ny</option>
-                  <option>Nyskick</option>
-                  <option>Använt skick</option>
-                </select>
-              </div>
+              {mode === "single" && (
+                <div className="flex flex-col gap-1.5">
+                  <label className={LABEL_CLASSES} htmlFor="condition">
+                    Skick
+                  </label>
+                  <select
+                    id="condition"
+                    className={INPUT_CLASSES}
+                    value={condition}
+                    onChange={(e) => setCondition(e.target.value)}
+                  >
+                    <option>Ny</option>
+                    <option>Nyskick</option>
+                    <option>Använt skick</option>
+                  </select>
+                </div>
+              )}
 
               <div className="flex flex-col gap-1.5">
                 <label className={LABEL_CLASSES} htmlFor="meetingPoint">
@@ -591,22 +964,24 @@ export default function SkapaAnnonsPage() {
                 )}
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className={LABEL_CLASSES} htmlFor="isbn">
-                  ISBN (valfritt)
-                </label>
-                <input
-                  id="isbn"
-                  type="text"
-                  className={INPUT_CLASSES}
-                  placeholder="978-..."
-                  value={isbn}
-                  onChange={(e) => setIsbn(e.target.value)}
-                />
-                <p className="text-xs text-gray-500">
-                  Hittas vanligtvis på bokens insida, t.ex. på andra sidan
-                </p>
-              </div>
+              {mode === "single" && (
+                <div className="flex flex-col gap-1.5">
+                  <label className={LABEL_CLASSES} htmlFor="isbn">
+                    ISBN (valfritt)
+                  </label>
+                  <input
+                    id="isbn"
+                    type="text"
+                    className={INPUT_CLASSES}
+                    placeholder="978-..."
+                    value={isbn}
+                    onChange={(e) => setIsbn(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500">
+                    Hittas vanligtvis på bokens insida, t.ex. på andra sidan
+                  </p>
+                </div>
+              )}
 
               <div className="flex flex-col gap-1.5">
                 <span className={LABEL_CLASSES}>Bilder</span>

@@ -17,6 +17,7 @@ export default function ListingCard({ listing, placeholderColor }) {
   // Övriga bilder hämtas först när någon interagerar med kortet.
   const [loadAll, setLoadAll] = useState(false);
   const shown = preview ?? selected;
+  const bookCount = listing.listing_items?.length ?? 0;
 
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-black/5 bg-white shadow-sm transition-shadow hover:shadow-md">
@@ -45,6 +46,12 @@ export default function ListingCard({ listing, placeholderColor }) {
               }`}
             />
           ) : null
+        )}
+
+        {bookCount >= 2 && (
+          <span className="pointer-events-none absolute left-2 top-2 z-[1] rounded-full bg-white/90 px-2 py-0.5 text-xs font-medium text-[var(--kth-blue)]">
+            {`Bundle · ${bookCount} böcker`}
+          </span>
         )}
 
         {images.length > 1 && (
