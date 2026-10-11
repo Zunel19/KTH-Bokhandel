@@ -42,11 +42,11 @@ export default function SellPrompt() {
   }, []);
 
   if (status === "checking") {
-    return <div className="mt-10 h-5" aria-hidden="true" />;
+    return <div className="h-5" aria-hidden="true" />;
   }
 
   return (
-    <div className="mt-10 flex items-center justify-center gap-1.5 text-sm">
+    <div className="flex items-center justify-center gap-1.5 text-sm">
       <span className="text-gray-500">Har du böcker att sälja?</span>
       <Link
         href="/skapa-annons"
