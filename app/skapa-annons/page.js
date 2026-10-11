@@ -1,16 +1,90 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { resizeToJpeg } from "@/lib/imageUtils";
 import Link from "next/link";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const MEETING_POINTS = ["Biblioteket", "Kårhuset", "Drottning Kristinas väg"];
+
+const MAX_IMAGES = 6;
+const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const BUCKET = "listing-images";
 
 const INPUT_CLASSES =
   "w-full rounded-lg border border-[var(--sky-blue)] bg-white px-4 py-2.5 text-sm text-[var(--navy)] focus:outline-none focus:ring-2 focus:ring-[var(--sky-blue)]";
 
 const LABEL_CLASSES = "text-sm font-medium text-[var(--navy)]";
+
+// Hindrar att ett tryck på knappen startar en dragning.
+function stopDrag(e) {
+  e.stopPropagation();
+}
+
+function SortableThumbnail({ image, index, total, disabled, onRemove }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: image.id, disabled });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      {...attributes}
+      {...listeners}
+      aria-label={`Bild ${index + 1} av ${total}`}
+      className={`relative rounded-lg ${
+        isDragging ? "z-10 cursor-grabbing shadow-lg" : "cursor-grab"
+      }`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={image.previewUrl}
+        alt={`Bild ${index + 1}`}
+        draggable={false}
+        className="aspect-square w-full rounded-lg border border-[var(--sky-blue)] object-cover"
+      />
+      <button
+        type="button"
+        aria-label="Ta bort bild"
+        onClick={() => onRemove(image.id)}
+        onMouseDown={stopDrag}
+        onTouchStart={stopDrag}
+        onKeyDown={stopDrag}
+        disabled={disabled}
+        className="absolute right-1 top-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-white/90 text-xs text-[var(--navy)] shadow-sm transition-colors hover:bg-white"
+      >
+        ✕
+      </button>
+      <span className="absolute bottom-1 left-1 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--kth-blue)] text-xs font-medium text-white">
+        {index + 1}
+      </span>
+    </div>
+  );
+}
 
 export default function SkapaAnnonsPage() {
   const router = useRouter();
@@ -34,6 +108,32 @@ export default function SkapaAnnonsPage() {
 
   const [courses, setCourses] = useState([]);
   const [selectedCourseId, setSelectedCourseId] = useState(null);
+
+  const [images, setImages] = useState([]);
+  const [imagesError, setImagesError] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState(null);
+  const imagesRef = useRef(images);
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  useEffect(() => {
+    imagesRef.current = images;
+  }, [images]);
+
+  // Frigör förhandsvisningarna när sidan lämnas.
+  useEffect(() => {
+    return () => {
+      imagesRef.current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+    };
+  }, []);
 
   useEffect(() => {
     async function checkSessionAndProfile() {
@@ -108,30 +208,162 @@ export default function SkapaAnnonsPage() {
     }
 
     setSaving(true);
-    const { error: insertError } = await supabase.from("listings").insert({
-      seller_id: userId,
-      course_id: selectedCourseId,
-      title: title.trim(),
-      description: description.trim() || null,
-      price: Number(price),
-      condition,
-      meeting_point:
-        (meetingPoint === "Valfritt"
-          ? customMeetingPoint.trim()
-          : meetingPoint) || null,
-      isbn: isbn.trim() || null,
-    });
+
+    // Förminska alla bilder innan något sparas, så att en trasig bild
+    // stoppar allt innan annonsen skapas.
+    let resized;
+    try {
+      resized = [];
+      for (const image of images) {
+        const full = await resizeToJpeg(image.file, 1400, 0.8);
+        const thumb = await resizeToJpeg(image.file, 480, 0.75);
+        resized.push({ full, thumb });
+      }
+    } catch (err) {
+      console.error("Kunde inte förminska bild:", err);
+      setError("En av bilderna kunde inte läsas. Använd JPG, PNG eller WebP.");
+      setSaving(false);
+      return;
+    }
+
+    const { data: listing, error: insertError } = await supabase
+      .from("listings")
+      .insert({
+        seller_id: userId,
+        course_id: selectedCourseId,
+        title: title.trim(),
+        description: description.trim() || null,
+        price: Number(price),
+        condition,
+        meeting_point:
+          (meetingPoint === "Valfritt"
+            ? customMeetingPoint.trim()
+            : meetingPoint) || null,
+        isbn: isbn.trim() || null,
+      })
+      .select("id")
+      .single();
 
     if (insertError) {
       console.error("Kunde inte spara annonsen:", insertError);
       setError("Något gick fel, försök igen.");
-    } else {
-      setSaved(true);
+      setSaving(false);
+      return;
     }
+
+    const listingId = listing.id;
+    const uploadedPaths = [];
+
+    try {
+      const rows = [];
+      for (let i = 0; i < resized.length; i++) {
+        const n = i + 1;
+        setUploadStatus(`Laddar upp bild ${n} av ${resized.length}...`);
+
+        const fullPath = `${userId}/${listingId}/${n}.jpg`;
+        const thumbPath = `${userId}/${listingId}/${n}_thumb.jpg`;
+
+        for (const [path, blob] of [
+          [fullPath, resized[i].full],
+          [thumbPath, resized[i].thumb],
+        ]) {
+          const { error: uploadError } = await supabase.storage
+            .from(BUCKET)
+            .upload(path, blob, {
+              contentType: "image/jpeg",
+              cacheControl: "31536000",
+              upsert: false,
+            });
+          if (uploadError) throw uploadError;
+          uploadedPaths.push(path);
+        }
+
+        rows.push({
+          listing_id: listingId,
+          image_url: supabase.storage.from(BUCKET).getPublicUrl(fullPath).data
+            .publicUrl,
+          thumb_url: supabase.storage.from(BUCKET).getPublicUrl(thumbPath).data
+            .publicUrl,
+          position: n,
+        });
+      }
+
+      if (rows.length > 0) {
+        const { error: imagesInsertError } = await supabase
+          .from("listing_images")
+          .insert(rows);
+        if (imagesInsertError) throw imagesInsertError;
+      }
+    } catch (err) {
+      console.error("Kunde inte spara bilderna:", err);
+
+      // Allt eller inget: städa bort allt som hann sparas.
+      if (uploadedPaths.length > 0) {
+        const { error: removeError } = await supabase.storage
+          .from(BUCKET)
+          .remove(uploadedPaths);
+        if (removeError) console.error("Kunde inte ta bort filer:", removeError);
+      }
+      await supabase.from("listing_images").delete().eq("listing_id", listingId);
+      const { error: deleteError } = await supabase
+        .from("listings")
+        .delete()
+        .eq("id", listingId);
+      if (deleteError) console.error("Kunde inte ta bort annonsen:", deleteError);
+
+      setError("Något gick fel när bilderna skulle sparas. Försök igen.");
+      setUploadStatus(null);
+      setSaving(false);
+      return;
+    }
+
+    setUploadStatus(null);
+    setSaved(true);
     setSaving(false);
   }
 
+  function handleImagesSelected(e) {
+    const files = Array.from(e.target.files ?? []);
+    // Nollställ så att samma fil kan väljas igen.
+    e.target.value = "";
+
+    const valid = files.filter(
+      (file) => file.type.startsWith("image/") && file.size <= MAX_FILE_SIZE
+    );
+    setImagesError(
+      valid.length < files.length
+        ? "Några filer hoppades över (bara bilder upp till 25 MB)."
+        : null
+    );
+
+    const room = MAX_IMAGES - images.length;
+    const added = valid.slice(0, room).map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+    }));
+    setImages((prev) => [...prev, ...added]);
+  }
+
+  function handleRemoveImage(id) {
+    const removed = images.find((image) => image.id === id);
+    if (removed) URL.revokeObjectURL(removed.previewUrl);
+    setImages((prev) => prev.filter((image) => image.id !== id));
+  }
+
+  // Ordningen i listan sparas som position (plats + 1).
+  function handleDragEnd({ active, over }) {
+    if (!over || active.id === over.id) return;
+    const oldIndex = images.findIndex((image) => image.id === active.id);
+    const newIndex = images.findIndex((image) => image.id === over.id);
+    setImages(arrayMove(images, oldIndex, newIndex));
+  }
+
   function handleReset() {
+    images.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+    setImages([]);
+    setImagesError(null);
+    setUploadStatus(null);
     setTitle("");
     setDescription("");
     setPrice("");
@@ -377,19 +609,68 @@ export default function SkapaAnnonsPage() {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className={LABEL_CLASSES} htmlFor="images">
-                  Bilder
-                </label>
-                <input
-                  id="images"
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  className="text-sm text-[var(--navy)]"
-                />
-                <p className="text-xs text-gray-500">
-                  Bilder kan inte sparas än, det kommer i nästa steg.
-                </p>
+                <span className={LABEL_CLASSES}>Bilder</span>
+                <div className="flex items-center gap-3">
+                  <input
+                    id="images"
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    className="sr-only"
+                    disabled={images.length >= MAX_IMAGES || saving}
+                    onChange={handleImagesSelected}
+                  />
+                  <label
+                    htmlFor="images"
+                    aria-disabled={images.length >= MAX_IMAGES || saving}
+                    className={`rounded-lg border border-[var(--sky-blue)] bg-transparent px-4 py-2 text-sm font-medium text-[var(--kth-blue)] transition-colors ${
+                      images.length >= MAX_IMAGES || saving
+                        ? "cursor-not-allowed opacity-60"
+                        : "cursor-pointer hover:bg-[var(--sky-blue)]/10"
+                    }`}
+                  >
+                    Lägg till bilder
+                  </label>
+                  <span className="text-sm text-gray-500">
+                    {images.length} av {MAX_IMAGES}
+                  </span>
+                </div>
+
+                {imagesError && (
+                  <p className="text-sm text-red-600">{imagesError}</p>
+                )}
+
+                {images.length > 0 && (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <SortableContext
+                      items={images.map((i) => i.id)}
+                      strategy={rectSortingStrategy}
+                    >
+                      <div className="mt-1 grid grid-cols-3 gap-2">
+                        {images.map((image, index) => (
+                          <SortableThumbnail
+                            key={image.id}
+                            image={image}
+                            index={index}
+                            total={images.length}
+                            disabled={saving}
+                            onRemove={handleRemoveImage}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                )}
+
+                {images.length >= 2 && (
+                  <p className="text-xs text-gray-500">
+                    Dra för att ändra ordning. Bild 1 visas först på annonsen.
+                  </p>
+                )}
               </div>
 
               {error && <p className="text-sm text-red-600">{error}</p>}
@@ -401,6 +682,12 @@ export default function SkapaAnnonsPage() {
               >
                 {saving ? "Sparar..." : "Lägg upp annons"}
               </button>
+
+              {uploadStatus && (
+                <p className="text-center text-sm text-gray-500">
+                  {uploadStatus}
+                </p>
+              )}
             </form>
           </>
         )}

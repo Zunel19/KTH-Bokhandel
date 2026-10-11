@@ -17,9 +17,12 @@ export default function ListingsGrid() {
     async function fetchListings() {
       const { data, error } = await supabase
         .from("listings")
-        .select("id, title, price, seller_id, created_at, profiles(username)")
+        .select(
+          "id, title, price, seller_id, created_at, profiles(username), listing_images(image_url, thumb_url, position)"
+        )
         .eq("status", "till salu")
         .order("created_at", { ascending: false })
+        .order("position", { referencedTable: "listing_images", ascending: true })
         .limit(8);
 
       if (error) {
