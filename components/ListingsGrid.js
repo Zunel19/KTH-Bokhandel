@@ -1,8 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import {
+  saveHomeState,
+  loadHomeState,
+  clearHomeState,
+  consumeReturning,
+} from "@/lib/homeState";
 import ListingCard from "./ListingCard";
 
 // Platshållarfärger som roteras tills annonser har riktiga bilder.
@@ -12,6 +18,45 @@ export default function ListingsGrid() {
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Scrollposition att återställa efter att sparade annonser renderats.
+  const [restoreY, setRestoreY] = useState(null);
+  const initializedRef = useRef(false);
+  const restoredRef = useRef(false);
+
+  // Vid tillbaka-navigering: visa sparade annonser direkt, så att sidan har
+  // rätt höjd och scrollpositionen kan återställas. Läses i en effekt för att
+  // undvika hydreringsfel. Ref:en skyddar mot dubbelkörning i Strict Mode.
+  useLayoutEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    const saved = consumeReturning() ? loadHomeState() : null;
+    if (saved?.listings?.length) {
+      restoredRef.current = true;
+      // Avsiktligt: sessionStorage kan inte läsas under rendering (servern
+      // har den inte), och det ska ske före första målningen.
+      /* eslint-disable react-hooks/set-state-in-effect */
+      setListings(saved.listings);
+      setLoading(false);
+      setRestoreY(saved.scrollY ?? 0);
+      /* eslint-enable react-hooks/set-state-in-effect */
+    } else {
+      clearHomeState();
+    }
+  }, []);
+
+  // Next.js kan scrolla till toppen efter monteringen, så upprepa.
+  useLayoutEffect(() => {
+    if (restoreY === null) return;
+    const y = restoreY;
+    window.scrollTo(0, y);
+    const frame = requestAnimationFrame(() => window.scrollTo(0, y));
+    const timer = setTimeout(() => window.scrollTo(0, y), 60);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [restoreY]);
 
   useEffect(() => {
     async function fetchListings() {
@@ -27,7 +72,10 @@ export default function ListingsGrid() {
 
       if (error) {
         console.error("Kunde inte hämta annonser:", error);
-        setError("Kunde inte hämta annonser just nu.");
+        // Visas sparade annonser redan behålls de i stället för ett felmeddelande.
+        if (!restoredRef.current) {
+          setError("Kunde inte hämta annonser just nu.");
+        }
       } else {
         setListings(data);
       }
@@ -54,7 +102,12 @@ export default function ListingsGrid() {
           !
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <div
+          className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4"
+          onClickCapture={() =>
+            saveHomeState({ listings, scrollY: window.scrollY })
+          }
+        >
           {listings.map((listing, index) => (
             <ListingCard
               key={listing.id}
