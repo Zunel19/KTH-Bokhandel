@@ -4,6 +4,8 @@ import { supabase } from "@/lib/supabase";
 import Avatar from "@/components/Avatar";
 import ListingGallery from "@/components/ListingGallery";
 import BackLink from "@/components/BackLink";
+import OwnerMenu from "@/components/OwnerMenu";
+import { postedAgo } from "@/lib/relativeTime";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +14,7 @@ const getListing = cache(async (id) => {
   const { data, error } = await supabase
     .from("listings")
     .select(
-      "id, title, description, price, meeting_point, status, created_at, seller_id, year, profiles(username), programs(name, years), listing_images(image_url, position), listing_items(title, isbn, condition, position, courses(code, name))"
+      "id, title, description, price, meeting_point, status, created_at, seller_id, year, profiles(username), programs(name, years), listing_images(image_url, thumb_url, position), listing_items(title, isbn, condition, position, courses(code, name))"
     )
     .eq("id", id)
     .order("position", { referencedTable: "listing_images", ascending: true })
@@ -31,22 +33,6 @@ export async function generateMetadata({ params }) {
     return { title: "Annonsen hittades inte" };
   }
   return { title: `${listing.title} – KTH Bokhandel` };
-}
-
-const rtf = new Intl.RelativeTimeFormat("sv", { numeric: "auto" });
-
-// "idag", "i går", "för 3 dagar sedan", "för 2 veckor sedan" osv.
-function postedAgo(dateString) {
-  const days = Math.floor(
-    (Date.now() - new Date(dateString).getTime()) / (1000 * 60 * 60 * 24)
-  );
-  if (days < 1) return "idag";
-  if (days <= 6) return rtf.format(-days, "day");
-  const weeks = Math.floor(days / 7);
-  if (weeks <= 4) return rtf.format(-weeks, "week");
-  const months = Math.floor(days / 30);
-  if (months < 12) return rtf.format(-Math.max(months, 1), "month");
-  return rtf.format(-Math.floor(days / 365), "year");
 }
 
 function courseLabel(course) {
@@ -84,9 +70,18 @@ export default async function AnnonsPage({ params }) {
           <ListingGallery images={images} title={listing.title} sold={isSold} />
 
           <div className="flex flex-col gap-4">
-            <h1 className="font-serif text-3xl text-[var(--navy)]">
-              {listing.title}
-            </h1>
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="font-serif text-3xl text-[var(--navy)]">
+                {listing.title}
+              </h1>
+              <OwnerMenu
+                listingId={listing.id}
+                sellerId={listing.seller_id}
+                status={listing.status}
+                title={listing.title}
+                images={images}
+              />
+            </div>
 
             <p className="text-2xl font-semibold text-[var(--kth-blue)]">
               {`${listing.price} kr`}

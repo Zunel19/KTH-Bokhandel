@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Avatar from "@/components/Avatar";
+import { clearPageState } from "@/lib/homeState";
 
 // Döljer den globala headern på de fristående auth-sidorna.
 // Ta bara bort den här listan/checken för att visa headern där igen.
@@ -77,6 +78,9 @@ export default function Header() {
 
   async function handleSignOut() {
     const { error } = await supabase.auth.signOut();
+    // Sparade sidlägen hör till den utloggade användaren.
+    clearPageState("kthb:profile");
+    clearPageState("kthb:home");
     if (error) {
       console.error("Utloggning misslyckades:", error);
     }
@@ -88,6 +92,16 @@ export default function Header() {
     router.refresh();
   }
 
+  // Loggan ger alltid en färsk startsida längst upp, utan återställt läge.
+  function handleLogoClick(e) {
+    clearPageState("kthb:home");
+    clearPageState("kthb:profile");
+    if (pathname === "/") {
+      e.preventDefault();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
   if (HIDDEN_ON.includes(pathname)) {
     return null;
   }
@@ -95,7 +109,13 @@ export default function Header() {
   return (
     <header className="relative z-50 bg-[var(--sand)] border-b border-[var(--kth-blue)]/20">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4 sm:px-8">
-        <span className="font-semibold text-[var(--navy)]">KTH Bokhandel</span>
+        <Link
+          href="/"
+          onClick={handleLogoClick}
+          className="rounded font-semibold text-[var(--navy)] transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--kth-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--sand)]"
+        >
+          KTH Bokhandel
+        </Link>
 
         {!checked ? (
           <div className="h-10 w-10" />

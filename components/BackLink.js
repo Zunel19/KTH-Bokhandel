@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { hasHomeState } from "@/lib/homeState";
+import { getNavCount } from "@/lib/homeState";
 
-// Går tillbaka i historiken om man kom från startsidan, så att den kan
-// återställa scrollpositionen. Annars en vanlig länk till startsidan.
+// Går tillbaka i historiken om man kom från en annan sida i appen, så att den
+// sidan kan återställa sitt läge. Annars en vanlig länk till startsidan.
 export default function BackLink() {
   const router = useRouter();
 
@@ -15,11 +15,27 @@ export default function BackLink() {
       return;
     }
     e.preventDefault();
-    if (hasHomeState() && window.history.length > 1) {
+    if (getNavCount() > 0 && window.history.length > 1) {
       router.back();
-    } else {
-      router.push("/");
+      return;
     }
+
+    // Ingen historik i fliken (t.ex. öppnad i ny flik): gå till sidan man kom
+    // ifrån om den ligger i appen, annars till startsidan.
+    try {
+      const referrer = document.referrer ? new URL(document.referrer) : null;
+      if (
+        referrer &&
+        referrer.origin === window.location.origin &&
+        referrer.pathname !== window.location.pathname
+      ) {
+        router.push(referrer.pathname + referrer.search);
+        return;
+      }
+    } catch {
+      // Ogiltig referrer: använd startsidan.
+    }
+    router.push("/");
   }
 
   return (
