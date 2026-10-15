@@ -27,3 +27,38 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/* Kort tonövergång när annonsrutnätet byter resultat. */
+@keyframes card-in {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.card-in {
+  animation: card-in 180ms ease-out;
+}
+
+/* Tunn laddningsindikator utan känd längd. */
+@keyframes progress-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.progress-indeterminate {
+  animation: progress-indeterminate 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-in,
+  .progress-indeterminate {
+    animation: none;
+  }
+}

@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { parseFilters, buildQueryString } from "@/lib/searchParams";
+import { useSearchParams } from "next/navigation";
+import { parseFilters, setUrlFilters } from "@/lib/searchParams";
+import { scrollToResults } from "@/lib/scroll";
 
 const INPUT_CLASSES =
   "w-full rounded-md border border-[var(--kth-blue)]/30 bg-white py-3 pl-4 pr-10 text-sm text-[var(--navy)] placeholder:text-[var(--navy)]/40 focus:outline-none focus:ring-2 focus:ring-[var(--sky-blue)]";
@@ -31,12 +32,12 @@ export function HeroSearchFallback() {
 }
 
 export default function HeroSearch() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const urlQuery = searchParams.get("q") ?? "";
 
   const [value, setValue] = useState(urlQuery);
-  // Håll fältet i synk när adressen ändras (t.ex. vid bakåt).
+  // Håll fältet i synk när q i adressen ändras (t.ex. vid bakåt). Andra
+  // filter påverkar inte texten man håller på att skriva.
   const [syncedQuery, setSyncedQuery] = useState(urlQuery);
   if (urlQuery !== syncedQuery) {
     setSyncedQuery(urlQuery);
@@ -44,9 +45,7 @@ export default function HeroSearch() {
   }
 
   function navigate(q) {
-    const filters = { ...parseFilters(searchParams), q: q || null };
-    const queryString = buildQueryString(filters);
-    router.replace(queryString ? `/?${queryString}` : "/", { scroll: false });
+    setUrlFilters({ ...parseFilters(searchParams), q: q || null });
   }
 
   function handleSubmit(e) {
@@ -54,11 +53,7 @@ export default function HeroSearch() {
     const q = value.trim();
     setValue(q);
     navigate(q);
-    requestAnimationFrame(() => {
-      document
-        .getElementById("resultat")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    requestAnimationFrame(scrollToResults);
   }
 
   function handleClear() {

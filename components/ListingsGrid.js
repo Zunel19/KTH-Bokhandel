@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
   saveHomeState,
@@ -15,14 +15,20 @@ import {
   buildQueryString,
   toRpcArgs,
   hasActiveFilters,
+  setUrlFilters,
 } from "@/lib/searchParams";
 import ListingCard from "./ListingCard";
 
 // Antal annonser per sida, sänk tillfälligt för att testa Visa fler.
 const PAGE_SIZE = 12;
 
+// Visa laddningsindikatorn först om hämtningen tar längre tid än så här.
+const BUSY_DELAY_MS = 150;
+
 // Platshållarfärger som roteras tills annonser har riktiga bilder.
 const PLACEHOLDER_COLORS = ["var(--kth-blue)", "var(--sky-blue)", "var(--navy)"];
+
+const GRID_CLASSES = "grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4";
 
 const SELECT =
   "id, title, price, seller_id, created_at, profiles(username), listing_images(image_url, thumb_url, position), listing_items(id)";
@@ -45,18 +51,35 @@ function fetchListings(filters, from, to) {
     .range(from, to);
 }
 
-export default function ListingsGrid() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const filters = parseFilters(searchParams);
-  // Nyckeln för den aktuella sökningen: query-stringen utan standardvärden.
-  const key = buildQueryString(filters);
-  const active = hasActiveFilters(filters);
+// Grått kort med samma proportioner som ett annonskort.
+function SkeletonCard() {
+  return (
+    <div className="flex animate-pulse flex-col overflow-hidden rounded-lg border border-black/5 bg-white shadow-sm">
+      <div className="aspect-square w-full bg-gray-200" />
+      <div className="flex flex-col gap-2 p-4">
+        <div className="h-4 w-3/4 rounded bg-gray-200" />
+        <div className="h-4 w-1/3 rounded bg-gray-200" />
+      </div>
+    </div>
+  );
+}
 
+export default function ListingsGrid() {
+  const searchParams = useSearchParams();
+  // Önskade filter: de som står i adressen.
+  const filters = parseFilters(searchParams);
+  // Nyckeln för den önskade sökningen: query-stringen utan standardvärden.
+  const key = buildQueryString(filters);
+
+  // Visade resultat och nyckeln för filtren de hämtades med (null innan
+  // något har laddats).
   const [listings, setListings] = useState([]);
-  const [count, setCount] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loadedCount, setLoadedCount] = useState(null);
+  const [loadedKey, setLoadedKey] = useState(null);
   const [error, setError] = useState(null);
+  // Ökar för varje svar som ersätter listan, för tonövergången.
+  const [gridKey, setGridKey] = useState(0);
+  const [showBusy, setShowBusy] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState(null);
   // Scrollposition att återställa efter att sparade annonser renderats.
@@ -66,19 +89,6 @@ export default function ListingsGrid() {
   // Nyckeln för ett återställt läge, eller null om inget återställdes.
   const restoredKeyRef = useRef(null);
   const currentKeyRef = useRef(key);
-
-  // Ny sökning: töm listan och visa laddning direkt (justeras under
-  // renderingen i stället för i en effekt).
-  const [shownKey, setShownKey] = useState(key);
-  if (key !== shownKey) {
-    setShownKey(key);
-    setListings([]);
-    setCount(null);
-    setLoading(true);
-    setError(null);
-    setMoreError(null);
-    setLoadingMore(false);
-  }
 
   // Vid tillbaka-navigering: visa sparade annonser direkt, så att sidan har
   // rätt höjd och scrollpositionen kan återställas. Bara om det sparade läget
@@ -95,8 +105,8 @@ export default function ListingsGrid() {
       // har den inte), och det ska ske före första målningen.
       /* eslint-disable react-hooks/set-state-in-effect */
       setListings(saved.listings);
-      setCount(saved.count ?? null);
-      setLoading(false);
+      setLoadedCount(saved.count ?? null);
+      setLoadedKey(key);
       setRestoreY(saved.scrollY ?? 0);
       /* eslint-enable react-hooks/set-state-in-effect */
     } else {
@@ -117,19 +127,25 @@ export default function ListingsGrid() {
     };
   }, [restoreY]);
 
-  // Hämta första sidan när sökningen ändras. Äldre svar ignoreras.
+  // Hämta första sidan när sökningen ändras. De visade resultaten ligger kvar
+  // tills svaret kommer. Äldre svar ignoreras.
   useEffect(() => {
     let cancelled = false;
     currentKeyRef.current = key;
 
     // Ett återställt läge uppdateras i bakgrunden med lika många annonser
-    // som visas, utan laddningstillstånd.
-    // Ref:en nollas först när sökningen byts, så att en dubbelkörning i
-    // Strict Mode också ser att läget återställdes.
+    // som visas, utan laddningsindikator. Ref:en nollas först när sökningen
+    // byts, så att en dubbelkörning i Strict Mode också ser det.
     const restored = restoredKeyRef.current === key;
     if (!restored) restoredKeyRef.current = null;
     const restoredCount = restored ? loadHomeState()?.listings?.length ?? 0 : 0;
     const to = Math.max(restoredCount, PAGE_SIZE) - 1;
+
+    const busyTimer = restored
+      ? null
+      : setTimeout(() => {
+          if (!cancelled) setShowBusy(true);
+        }, BUSY_DELAY_MS);
 
     async function load() {
       const { data, error, count } = await fetchListings(
@@ -138,37 +154,51 @@ export default function ListingsGrid() {
         to
       );
       if (cancelled) return;
+      clearTimeout(busyTimer);
+      setShowBusy(false);
 
       if (error) {
         console.error("Kunde inte hämta annonser:", error);
         // Visas sparade annonser redan behålls de i stället för ett felmeddelande.
-        if (!restored) setError("Kunde inte hämta annonser just nu.");
-      } else {
-        setListings(data);
-        setCount(count ?? null);
+        if (!restored) {
+          setError("Kunde inte hämta annonser just nu.");
+          setLoadedKey(key);
+        }
+        return;
       }
-      setLoading(false);
+
+      // Lista, antal och rubrik byts samtidigt.
+      setListings(data);
+      setLoadedCount(count ?? null);
+      setLoadedKey(key);
+      setError(null);
+      setMoreError(null);
+      if (!restored) setGridKey((k) => k + 1);
     }
 
     load();
     return () => {
       cancelled = true;
+      clearTimeout(busyTimer);
     };
   }, [key]);
 
   async function handleLoadMore() {
-    const requestKey = key;
+    const requestKey = loadedKey;
     const from = listings.length;
     setLoadingMore(true);
     setMoreError(null);
 
     const { data, error, count } = await fetchListings(
-      filters,
+      parseFilters(new URLSearchParams(requestKey)),
       from,
       from + PAGE_SIZE - 1
     );
     // Sökningen har bytts under tiden: släng svaret.
-    if (currentKeyRef.current !== requestKey) return;
+    if (currentKeyRef.current !== requestKey) {
+      setLoadingMore(false);
+      return;
+    }
 
     if (error) {
       console.error("Kunde inte hämta fler annonser:", error);
@@ -178,27 +208,106 @@ export default function ListingsGrid() {
         const seen = new Set(prev.map((l) => l.id));
         return [...prev, ...data.filter((l) => !seen.has(l.id))];
       });
-      if (count !== null && count !== undefined) setCount(count);
+      if (count !== null && count !== undefined) setLoadedCount(count);
     }
     setLoadingMore(false);
   }
 
   // Tar bort sökord och alla filter men behåller sorteringen.
   function clearFilters() {
-    const queryString = buildQueryString({ sort: filters.sort });
-    router.replace(queryString ? `/?${queryString}` : "/", { scroll: false });
+    setUrlFilters({ sort: filters.sort });
   }
 
-  const hasMore = count !== null && listings.length < count;
+  // Rubriken och tomt-läget följer de visade resultaten, inte adressen.
+  const loadedFilters = loadedKey !== null ? parseFilters(new URLSearchParams(loadedKey)) : null;
+  const loadedActive = loadedFilters ? hasActiveFilters(loadedFilters) : false;
+  const firstLoad = loadedKey === null;
+  const busy = showBusy && !firstLoad;
+  const hasMore = loadedCount !== null && listings.length < loadedCount;
 
   let heading = "Senast tillagda";
-  if (active) {
-    if (count === null) {
-      heading = "Söker...";
-    } else {
-      heading = `${count} ${count === 1 ? "annons" : "annonser"}`;
-      if (filters.q) heading += ` för ”${filters.q}”`;
-    }
+  if (loadedActive && loadedCount !== null) {
+    heading = `${loadedCount} ${loadedCount === 1 ? "annons" : "annonser"}`;
+    if (loadedFilters.q) heading += ` för ”${loadedFilters.q}”`;
+  }
+
+  let content;
+  if (firstLoad) {
+    content = (
+      <div className={GRID_CLASSES} aria-busy="true">
+        {Array.from({ length: 8 }, (_, i) => (
+          <SkeletonCard key={i} />
+        ))}
+      </div>
+    );
+  } else if (error) {
+    content = <p className="text-sm text-red-600">{error}</p>;
+  } else if (listings.length === 0) {
+    content = loadedActive ? (
+      <div className="flex flex-col items-start gap-3">
+        <p className="text-sm text-gray-500">Inga annonser matchade din sökning.</p>
+        <button
+          type="button"
+          onClick={clearFilters}
+          className="rounded-lg border border-[var(--sky-blue)] bg-transparent px-4 py-2 text-sm font-medium text-[var(--kth-blue)] transition-colors hover:bg-[var(--sky-blue)]/10"
+        >
+          Rensa filter
+        </button>
+      </div>
+    ) : (
+      <p className="text-sm text-gray-500">
+        Inga annonser än. Bli först med att{" "}
+        <Link href="/skapa-annons" className="text-[var(--kth-blue)] hover:underline">
+          lägga upp en
+        </Link>
+        !
+      </p>
+    );
+  } else {
+    content = (
+      <>
+        <div
+          key={gridKey}
+          className={`card-in ${GRID_CLASSES}`}
+          onClickCapture={() =>
+            saveHomeState({
+              key: loadedKey,
+              listings,
+              count: loadedCount,
+              scrollY: window.scrollY,
+            })
+          }
+        >
+          {listings.map((listing, index) => (
+            <ListingCard
+              key={listing.id}
+              listing={listing}
+              placeholderColor={PLACEHOLDER_COLORS[index % PLACEHOLDER_COLORS.length]}
+            />
+          ))}
+        </div>
+
+        {(hasMore || moreError) && (
+          <div className="mt-8 flex flex-col items-center gap-2">
+            {hasMore && (
+              <button
+                type="button"
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="rounded-lg border border-[var(--sky-blue)] bg-transparent px-6 py-2.5 text-sm font-medium text-[var(--kth-blue)] transition-colors hover:bg-[var(--sky-blue)]/10 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loadingMore ? "Laddar..." : "Visa fler"}
+              </button>
+            )}
+            {moreError && (
+              <p className="text-sm text-red-600" role="alert">
+                {moreError}
+              </p>
+            )}
+          </div>
+        )}
+      </>
+    );
   }
 
   return (
@@ -213,7 +322,7 @@ export default function ListingsGrid() {
         >
           {heading}
         </h2>
-        {active && (
+        {hasActiveFilters(filters) && (
           <button
             type="button"
             onClick={clearFilters}
@@ -224,71 +333,24 @@ export default function ListingsGrid() {
         )}
       </div>
 
-      {loading ? (
-        <p className="text-sm text-gray-500">Laddar annonser...</p>
-      ) : error ? (
-        <p className="text-sm text-red-600">{error}</p>
-      ) : listings.length === 0 ? (
-        active ? (
-          <div className="flex flex-col items-start gap-3">
-            <p className="text-sm text-gray-500">
-              Inga annonser matchade din sökning.
-            </p>
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="rounded-lg border border-[var(--sky-blue)] bg-transparent px-4 py-2 text-sm font-medium text-[var(--kth-blue)] transition-colors hover:bg-[var(--sky-blue)]/10"
-            >
-              Rensa filter
-            </button>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">
-            Inga annonser än. Bli först med att{" "}
-            <Link href="/skapa-annons" className="text-[var(--kth-blue)] hover:underline">
-              lägga upp en
-            </Link>
-            !
-          </p>
-        )
-      ) : (
-        <>
+      <div className="relative">
+        {busy && (
           <div
-            className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4"
-            onClickCapture={() =>
-              saveHomeState({ key, listings, count, scrollY: window.scrollY })
-            }
+            className="absolute inset-x-0 -top-3 h-[2px] overflow-hidden rounded-full bg-[var(--kth-blue)]/15"
+            aria-hidden="true"
           >
-            {listings.map((listing, index) => (
-              <ListingCard
-                key={listing.id}
-                listing={listing}
-                placeholderColor={PLACEHOLDER_COLORS[index % PLACEHOLDER_COLORS.length]}
-              />
-            ))}
+            <div className="progress-indeterminate h-full w-2/5 bg-[var(--kth-blue)]" />
           </div>
-
-          {(hasMore || moreError) && (
-            <div className="mt-8 flex flex-col items-center gap-2">
-              {hasMore && (
-                <button
-                  type="button"
-                  onClick={handleLoadMore}
-                  disabled={loadingMore}
-                  className="rounded-lg border border-[var(--sky-blue)] bg-transparent px-6 py-2.5 text-sm font-medium text-[var(--kth-blue)] transition-colors hover:bg-[var(--sky-blue)]/10 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {loadingMore ? "Laddar..." : "Visa fler"}
-                </button>
-              )}
-              {moreError && (
-                <p className="text-sm text-red-600" role="alert">
-                  {moreError}
-                </p>
-              )}
-            </div>
-          )}
-        </>
-      )}
+        )}
+        <div
+          aria-busy={busy ? "true" : undefined}
+          className={`transition-opacity duration-150 ${
+            busy ? "pointer-events-none opacity-60" : ""
+          }`}
+        >
+          {content}
+        </div>
+      </div>
     </section>
   );
 }

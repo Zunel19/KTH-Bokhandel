@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { parseFilters, buildQueryString } from "@/lib/searchParams";
+import { parseFilters, buildQueryString, setUrlFilters } from "@/lib/searchParams";
+import { scrollToResults } from "@/lib/scroll";
 import SearchSelect from "@/components/SearchSelect";
 
 const PILL_BASE =
@@ -159,14 +160,11 @@ function PopoverPill({
   );
 }
 
-function formatKr(n) {
-  return String(n);
-}
 
 function priceLabel(min, max) {
-  if (min !== null && max !== null) return `${formatKr(min)}–${formatKr(max)} kr`;
-  if (min !== null) return `Från ${formatKr(min)} kr`;
-  if (max !== null) return `Till ${formatKr(max)} kr`;
+  if (min !== null && max !== null) return `${min}–${max} kr`;
+  if (min !== null) return `Från ${min} kr`;
+  if (max !== null) return `Till ${max} kr`;
   return "Pris";
 }
 
@@ -184,8 +182,27 @@ function parsePriceInput(value) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+
+// Utkastet: det som är valt i filterraden men ännu inte tillämpat.
+// min och max är strängar så som de står i fälten.
+function draftFromFilters(filters) {
+  return {
+    kurs: filters.kurs,
+    program: filters.program,
+    ar: filters.ar,
+    skick: filters.skick,
+    min: filters.min !== null ? String(filters.min) : "",
+    max: filters.max !== null ? String(filters.max) : "",
+  };
+}
+
+// De delar av adressen som utkastet utgår från (inte sorteringen, som
+// tillämpas direkt och inte ska nollställa ett pågående utkast).
+function appliedSignature(filters) {
+  return buildQueryString({ ...filters, sort: "nyast" });
+}
+
 export default function FilterBar() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const filters = parseFilters(searchParams);
 
@@ -194,9 +211,15 @@ export default function FilterBar() {
   // Bara ett filter öppet åt gången.
   const [openId, setOpenId] = useState(null);
 
-  const [priceFrom, setPriceFrom] = useState("");
-  const [priceTo, setPriceTo] = useState("");
-  const [priceError, setPriceError] = useState(null);
+  // Utkastet återställs varje gång adressens filter ändras utifrån (bakåt,
+  // "Rensa filter", ✕ i sökfältet, omladdning).
+  const [draft, setDraft] = useState(() => draftFromFilters(filters));
+  const signature = appliedSignature(filters);
+  const [syncedSignature, setSyncedSignature] = useState(signature);
+  if (signature !== syncedSignature) {
+    setSyncedSignature(signature);
+    setDraft(draftFromFilters(filters));
+  }
 
   useEffect(() => {
     async function fetchOptions() {
@@ -218,13 +241,36 @@ export default function FilterBar() {
     fetchOptions();
   }, []);
 
-  function update(changes) {
-    const queryString = buildQueryString({ ...filters, ...changes });
-    router.replace(queryString ? `/?${queryString}` : "/", { scroll: false });
+  function changeDraft(changes) {
+    setDraft((prev) => ({ ...prev, ...changes }));
   }
 
   function setOpen(id, open) {
     setOpenId((current) => (open ? id : current === id ? null : current));
+  }
+
+  // Utkastet som filter, och om det är giltigt och skiljer sig från adressen.
+  const draftMin = parsePriceInput(draft.min);
+  const draftMax = parsePriceInput(draft.max);
+  const priceInvalid =
+    draftMin !== null && draftMax !== null && draftMin > draftMax;
+  const draftFilters = {
+    ...filters,
+    kurs: draft.kurs,
+    program: draft.program,
+    ar: draft.ar,
+    skick: draft.skick,
+    min: draftMin,
+    max: draftMax,
+  };
+  const changed = buildQueryString(draftFilters) !== buildQueryString(filters);
+  const canApply = changed && !priceInvalid;
+
+  function applyDraft() {
+    if (!canApply) return;
+    setUrlFilters(draftFilters);
+    setOpenId(null);
+    requestAnimationFrame(scrollToResults);
   }
 
   // Kurs
@@ -234,7 +280,7 @@ export default function FilterBar() {
     primary: c.name,
     secondary: c.code,
   }));
-  const selectedCourse = courses.find((c) => c.id === filters.kurs);
+  const selectedCourse = courses.find((c) => c.id === draft.kurs);
 
   // Program
   const programItems = programs.map((p) => ({
@@ -243,71 +289,45 @@ export default function FilterBar() {
     primary: p.name,
     secondary: `${p.years} år`,
   }));
-  const selectedProgram = programs.find((p) => p.id === filters.program);
-
-  // Pris: fälten fylls från adressen när popovern öppnas.
-  function openPrice(open) {
-    if (open) {
-      setPriceFrom(filters.min !== null ? String(filters.min) : "");
-      setPriceTo(filters.max !== null ? String(filters.max) : "");
-      setPriceError(null);
-      setOpen("pris", true);
-    } else {
-      applyPrice();
-      setOpen("pris", false);
-    }
-  }
-
-  // Returnerar false om värdena inte kunde tillämpas.
-  function applyPrice(from = priceFrom, to = priceTo) {
-    const min = parsePriceInput(from);
-    const max = parsePriceInput(to);
-    if (min !== null && max !== null && min > max) {
-      setPriceError("Från kan inte vara större än till.");
-      return false;
-    }
-    setPriceError(null);
-    if (min !== filters.min || max !== filters.max) update({ min, max });
-    return true;
-  }
+  const selectedProgram = programs.find((p) => p.id === draft.program);
 
   function toggleCondition(code) {
-    const next = filters.skick.includes(code)
-      ? filters.skick.filter((c) => c !== code)
-      : [...filters.skick, code];
+    const next = draft.skick.includes(code)
+      ? draft.skick.filter((c) => c !== code)
+      : [...draft.skick, code];
     // Behåll samma ordning som i listan.
-    update({ skick: CONDITIONS.map((c) => c.code).filter((c) => next.includes(c)) });
+    changeDraft({
+      skick: CONDITIONS.map((c) => c.code).filter((c) => next.includes(c)),
+    });
   }
 
   const linkButton =
     "text-sm text-[var(--kth-blue)] hover:underline focus:outline-none focus-visible:underline";
+  const priceInputClasses =
+    "w-full rounded-lg border border-[var(--sky-blue)] bg-white px-3 py-2 text-sm text-[var(--navy)] focus:outline-none focus:ring-2 focus:ring-[var(--sky-blue)]";
 
   return (
     <section className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-3 px-6 py-4 sm:px-8">
       <PopoverPill
-        label={
-          filters.kurs ? (selectedCourse?.code ?? "Vald kurs") : "Alla kurser"
-        }
-        active={Boolean(filters.kurs)}
+        label={draft.kurs ? (selectedCourse?.code ?? "Vald kurs") : "Alla kurser"}
+        active={Boolean(draft.kurs)}
         open={openId === "kurs"}
         onOpenChange={(open) => setOpen("kurs", open)}
-        onClear={() => update({ kurs: null })}
+        onClear={() => changeDraft({ kurs: null })}
         clearLabel="Ta bort kursfilter"
         popoverLabel="Välj kurs"
         widthClass="w-80"
       >
         <SearchSelect
+          clearOnType={false}
           id="filter-kurs"
           items={courseItems}
-          value={filters.kurs}
+          value={draft.kurs}
           onChange={(id) => {
-            // null kommer medan man skriver; filtret ändras bara vid val.
-            if (id) {
-              update({ kurs: id });
-              setOpen("kurs", false);
-            }
+            changeDraft({ kurs: id });
+            setOpen("kurs", false);
           }}
-          placeholder="Sök kurskod eller namn..."
+          placeholder="Alla kurser"
           emptyText="Inga kurser hittades"
           autoFocus
         />
@@ -315,30 +335,32 @@ export default function FilterBar() {
 
       <PopoverPill
         label={
-          filters.program
+          draft.program
             ? (selectedProgram?.name ?? "Valt program")
             : "Alla program"
         }
-        active={Boolean(filters.program)}
+        active={Boolean(draft.program)}
         open={openId === "program"}
         onOpenChange={(open) => setOpen("program", open)}
-        onClear={() => update({ program: null, ar: null })}
+        onClear={() => changeDraft({ program: null, ar: null })}
         clearLabel="Ta bort programfilter"
         popoverLabel="Välj program"
         widthClass="w-80"
       >
         <SearchSelect
+          clearOnType={false}
           id="filter-program"
           items={programItems}
-          value={filters.program}
+          value={draft.program}
           onChange={(id) => {
-            if (id) {
-              // Byte av program nollställer årskursen.
-              update({ program: id, ar: null });
-              setOpen("program", false);
-            }
+            // Byte av program nollställer årskursen.
+            changeDraft({
+              program: id,
+              ar: id === draft.program ? draft.ar : null,
+            });
+            setOpen("program", false);
           }}
-          placeholder="Sök program..."
+          placeholder="Alla program"
           emptyText="Inga program hittades"
           autoFocus
         />
@@ -347,9 +369,9 @@ export default function FilterBar() {
       {selectedProgram && selectedProgram.years > 1 && (
         <SelectPill
           label="Årskurs"
-          value={filters.ar ?? ""}
-          active={Boolean(filters.ar)}
-          onChange={(value) => update({ ar: value ? Number(value) : null })}
+          value={draft.ar ?? ""}
+          active={Boolean(draft.ar)}
+          onChange={(value) => changeDraft({ ar: value ? Number(value) : null })}
         >
           <option value="">Alla år</option>
           {Array.from({ length: selectedProgram.years }, (_, i) => i + 1).map(
@@ -363,8 +385,8 @@ export default function FilterBar() {
       )}
 
       <PopoverPill
-        label={conditionLabel(filters.skick)}
-        active={filters.skick.length > 0}
+        label={conditionLabel(draft.skick)}
+        active={draft.skick.length > 0}
         open={openId === "skick"}
         onOpenChange={(open) => setOpen("skick", open)}
         popoverLabel="Välj skick"
@@ -379,7 +401,7 @@ export default function FilterBar() {
             >
               <input
                 type="checkbox"
-                checked={filters.skick.includes(condition.code)}
+                checked={draft.skick.includes(condition.code)}
                 onChange={() => toggleCondition(condition.code)}
                 className="h-4 w-4 accent-[var(--kth-blue)]"
               />
@@ -387,10 +409,10 @@ export default function FilterBar() {
             </label>
           ))}
         </fieldset>
-        {filters.skick.length > 0 && (
+        {draft.skick.length > 0 && (
           <button
             type="button"
-            onClick={() => update({ skick: [] })}
+            onClick={() => changeDraft({ skick: [] })}
             className={`mt-3 ${linkButton}`}
           >
             Rensa
@@ -399,17 +421,18 @@ export default function FilterBar() {
       </PopoverPill>
 
       <PopoverPill
-        label={priceLabel(filters.min, filters.max)}
-        active={filters.min !== null || filters.max !== null}
+        label={priceInvalid ? "Pris" : priceLabel(draftMin, draftMax)}
+        active={draftMin !== null || draftMax !== null}
         open={openId === "pris"}
-        onOpenChange={openPrice}
+        onOpenChange={(open) => setOpen("pris", open)}
         popoverLabel="Välj pris"
         widthClass="w-64"
       >
         <form
           onSubmit={(e) => {
+            // Enter i ett prisfält applicerar filtren.
             e.preventDefault();
-            applyPrice();
+            applyDraft();
           }}
           className="flex flex-col gap-3"
         >
@@ -420,10 +443,9 @@ export default function FilterBar() {
                 type="number"
                 min="0"
                 inputMode="numeric"
-                value={priceFrom}
-                onChange={(e) => setPriceFrom(e.target.value)}
-                onBlur={() => applyPrice()}
-                className="w-full rounded-lg border border-[var(--sky-blue)] bg-white px-3 py-2 text-sm text-[var(--navy)] focus:outline-none focus:ring-2 focus:ring-[var(--sky-blue)]"
+                value={draft.min}
+                onChange={(e) => changeDraft({ min: e.target.value })}
+                className={priceInputClasses}
               />
             </label>
             <label className="flex flex-1 flex-col gap-1 text-xs text-gray-500">
@@ -432,31 +454,24 @@ export default function FilterBar() {
                 type="number"
                 min="0"
                 inputMode="numeric"
-                value={priceTo}
-                onChange={(e) => setPriceTo(e.target.value)}
-                onBlur={() => applyPrice()}
-                className="w-full rounded-lg border border-[var(--sky-blue)] bg-white px-3 py-2 text-sm text-[var(--navy)] focus:outline-none focus:ring-2 focus:ring-[var(--sky-blue)]"
+                value={draft.max}
+                onChange={(e) => changeDraft({ max: e.target.value })}
+                className={priceInputClasses}
               />
             </label>
           </div>
-          {priceError && (
+          {priceInvalid && (
             <p className="text-xs text-red-600" role="alert">
-              {priceError}
+              Från kan inte vara större än till.
             </p>
           )}
-          {/* Enter i ett fält skickar formuläret. */}
           <button type="submit" className="sr-only">
-            Använd pris
+            Applicera filter
           </button>
-          {(filters.min !== null || filters.max !== null || priceFrom || priceTo) && (
+          {(draft.min || draft.max) && (
             <button
               type="button"
-              onClick={() => {
-                setPriceFrom("");
-                setPriceTo("");
-                setPriceError(null);
-                update({ min: null, max: null });
-              }}
+              onClick={() => changeDraft({ min: "", max: "" })}
               className={`self-start ${linkButton}`}
             >
               Rensa
@@ -465,12 +480,26 @@ export default function FilterBar() {
         </form>
       </PopoverPill>
 
+      <button
+        type="button"
+        onClick={applyDraft}
+        disabled={!canApply}
+        className={`rounded-full border px-4 py-2 text-sm font-medium shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--kth-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--sand)] ${
+          canApply
+            ? "border-transparent bg-[var(--kth-blue)] text-white hover:bg-[var(--navy)]"
+            : "cursor-not-allowed border-black/10 bg-white/60 text-gray-400 shadow-none"
+        }`}
+      >
+        Applicera filter
+      </button>
+
       <div className="ml-auto">
+        {/* Sorteringen tillämpas direkt, den ändrar bara ordningen. */}
         <SelectPill
           label="Sortera"
           value={filters.sort}
           active={false}
-          onChange={(value) => update({ sort: value })}
+          onChange={(value) => setUrlFilters({ ...filters, sort: value })}
         >
           {SORTS.map((sort) => (
             <option key={sort.value} value={sort.value}>
