@@ -15,6 +15,7 @@ export default function SearchSelect({
   placeholder,
   id,
   emptyText,
+  autoFocus = false,
 }) {
   const [query, setQuery] = useState(
     () => items.find((item) => item.id === value)?.label ?? ""
@@ -67,6 +68,7 @@ export default function SearchSelect({
         </svg>
         <input
           id={id}
+          autoFocus={autoFocus}
           type="text"
           className={`${INPUT_CLASSES} pl-9`}
           placeholder={placeholder}

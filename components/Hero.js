@@ -1,5 +1,7 @@
+import { Suspense } from "react";
 import Image from "next/image";
 import SellPrompt from "./SellPrompt";
+import HeroSearch, { HeroSearchFallback } from "./HeroSearch";
 
 export default function Hero() {
   return (
@@ -39,19 +41,11 @@ export default function Hero() {
 
         <SellPrompt />
 
-        <div className="mt-16 flex w-full max-w-xl gap-2">
-          <input
-            type="text"
-            placeholder="Sök kurskod, titel eller författare..."
-            className="flex-1 rounded-md border border-[var(--kth-blue)]/30 bg-white px-4 py-3 text-sm text-[var(--navy)] placeholder:text-[var(--navy)]/40 focus:outline-none focus:ring-2 focus:ring-[var(--sky-blue)]"
-          />
-          <button
-            type="button"
-            className="rounded-md bg-[var(--kth-blue)] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[var(--navy)]"
-          >
-            Sök
-          </button>
-        </div>
+        {/* Sökfältet läser adressens sökparametrar och ligger därför i en egen
+            Suspense-gräns, så att resten av hero kan förrenderas. */}
+        <Suspense fallback={<HeroSearchFallback />}>
+          <HeroSearch />
+        </Suspense>
       </div>
     </section>
   );
