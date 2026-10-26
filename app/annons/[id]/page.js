@@ -5,6 +5,7 @@ import Avatar from "@/components/Avatar";
 import ListingGallery from "@/components/ListingGallery";
 import BackLink from "@/components/BackLink";
 import OwnerMenu from "@/components/OwnerMenu";
+import ContactSeller from "@/components/ContactSeller";
 import { postedAgo } from "@/lib/relativeTime";
 
 export const dynamic = "force-dynamic";
@@ -119,24 +120,12 @@ export default async function AnnonsPage({ params }) {
               </p>
             )}
 
-            {isSold ? (
-              <p className="text-sm text-[var(--navy)]">
-                Den här annonsen är såld.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                <button
-                  type="button"
-                  disabled
-                  className="cursor-not-allowed rounded-lg bg-[var(--kth-blue)] px-6 py-3 text-sm font-medium text-white opacity-60"
-                >
-                  Kontakta säljaren
-                </button>
-                <p className="text-center text-xs text-gray-500">
-                  Meddelanden kommer snart
-                </p>
-              </div>
-            )}
+            <ContactSeller
+              listingId={listing.id}
+              sellerId={listing.seller_id}
+              sellerUsername={listing.profiles?.username ?? "säljaren"}
+              status={listing.status}
+            />
           </div>
         </div>
 
