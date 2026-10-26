@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase";
 import { resizeToJpeg } from "@/lib/imageUtils";
 import Link from "next/link";
 import SearchSelect from "@/components/SearchSelect";
+import BackLink from "@/components/BackLink";
+import { clearHomeState, clearPageState } from "@/lib/homeState";
 import {
   DndContext,
   closestCenter,
@@ -466,6 +468,9 @@ export default function SkapaAnnonsPage() {
     }
 
     setUploadStatus(null);
+    // Sparade sidlägen saknar den nya annonsen.
+    clearHomeState();
+    clearPageState("kthb:profile");
     setSaved(true);
     setSaving(false);
   }
@@ -542,25 +547,7 @@ export default function SkapaAnnonsPage() {
   return (
     <main className="min-h-screen bg-[var(--sand)] px-6 py-12 sm:px-8">
       <div className="mx-auto w-full max-w-xl">
-        <Link
-          href="/"
-          className="mb-6 inline-flex items-center gap-1 text-sm text-[var(--navy)] transition-colors hover:text-[var(--kth-blue)] hover:underline"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            className="h-4 w-4"
-            aria-hidden="true"
-          >
-            <path
-              fillRule="evenodd"
-              d="M17 10a.75.75 0 0 1-.75.75H5.56l4.72 4.72a.75.75 0 1 1-1.06 1.06l-6-6a.75.75 0 0 1 0-1.06l6-6a.75.75 0 1 1 1.06 1.06L5.56 9.25H16.25A.75.75 0 0 1 17 10Z"
-              clipRule="evenodd"
-            />
-          </svg>
-          Tillbaka
-        </Link>
+        <BackLink />
 
         {saved ? (
           <div className="rounded-lg border border-black/5 bg-white p-8 shadow-sm">
@@ -570,7 +557,7 @@ export default function SkapaAnnonsPage() {
             <p className="mb-6 text-sm text-gray-500">
               Annonsen är nu publicerad och syns för andra studenter.
             </p>
-            <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="flex flex-wrap gap-3">
               <button
                 type="button"
                 onClick={handleReset}
@@ -578,6 +565,12 @@ export default function SkapaAnnonsPage() {
               >
                 Lägg upp en till
               </button>
+              <Link
+                href="/profil"
+                className="rounded-lg border border-[var(--kth-blue)] bg-transparent px-6 py-3 text-center text-sm font-medium text-[var(--kth-blue)] transition-colors hover:bg-[var(--kth-blue)] hover:text-white"
+              >
+                Till din profil
+              </Link>
               <Link
                 href="/"
                 className="rounded-lg border border-[var(--kth-blue)] bg-transparent px-6 py-3 text-center text-sm font-medium text-[var(--kth-blue)] transition-colors hover:bg-[var(--kth-blue)] hover:text-white"
